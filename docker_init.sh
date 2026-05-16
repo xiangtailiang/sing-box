@@ -224,6 +224,12 @@ EOF
                 "type":"remote",
                 "format":"binary",
                 "url":"https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-openai.srs"
+            },
+            {
+                "tag":"geosite-google-gemini",
+                "type":"remote",
+                "format":"binary",
+                "url":"https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-google-gemini.srs"
             }
         ],
         "rules":[
@@ -240,9 +246,22 @@ EOF
             {
                 "action": "resolve",
                 "rule_set":[
+                    "geosite-google-gemini"
+                ],
+                "strategy": "${STRATEGY}"
+            },
+            {
+                "action": "resolve",
+                "rule_set":[
                     "geosite-openai"
                 ],
                 "strategy": "prefer_ipv6"
+            },
+            {
+                "rule_set":[
+                    "geosite-google-gemini"
+                ],
+                "outbound":"warp-ep"
             },
             {
                 "domain":[
