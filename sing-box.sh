@@ -3913,6 +3913,38 @@ install_sing-box() {
   [ ! -d ${TEMP_DIR} ] && mkdir -p $TEMP_DIR
   ssl_certificate $TLS_SERVER_DEFAULT
   hint "\n $(text 2) " && wait
+
+  # 某些场景下（如重装、残留旧 service 或下载任务失败）后台预下载不会产出临时二进制，这里同步补齐并做校验
+  if [ ! -x "$TEMP_DIR/sing-box" ]; then
+    local ONLINE=$(get_sing_box_version)
+    local SB_DIR="$TEMP_DIR/sing-box-$ONLINE-linux-$SING_BOX_ARCH"
+    local SB_BIN="$SB_DIR/sing-box"
+    wget --no-check-certificate --continue \
+      ${GH_PROXY}https://github.com/SagerNet/sing-box/releases/download/v$ONLINE/sing-box-$ONLINE-linux-$SING_BOX_ARCH.tar.gz \
+      -qO- | tar xz -C $TEMP_DIR 2>/dev/null
+    [ -s "$SB_BIN" ] && [ -x "$SB_BIN" ] && mv "$SB_BIN" "$TEMP_DIR/sing-box" && chmod +x "$TEMP_DIR/sing-box"
+  fi
+  [ -x "$TEMP_DIR/sing-box" ] || error "\n $(text 42) \n"
+
+  [ -x "$TEMP_DIR/jq" ] || wget --no-check-certificate --continue -qO $TEMP_DIR/jq \
+    ${GH_PROXY}https://github.com/jqlang/jq/releases/download/jq-1.7.1/jq-linux-$JQ_ARCH 2>/dev/null \
+    && chmod +x $TEMP_DIR/jq
+  [ -x "$TEMP_DIR/jq" ] || error "\n jq download failed / jq 下载失败，请检查 GitHub 网络连通性。\n"
+
+  if [ "$IS_SUB" = 'is_sub' ] && [ ! -x "$TEMP_DIR/qrencode" ]; then
+    wget --no-check-certificate --continue -qO $TEMP_DIR/qrencode \
+      ${GH_PROXY}https://github.com/fscarmen/client_template/raw/main/qrencode-go/qrencode-go-linux-$QRENCODE_ARCH 2>/dev/null \
+      && chmod +x $TEMP_DIR/qrencode
+  fi
+  [ "$IS_SUB" != 'is_sub' ] || [ -x "$TEMP_DIR/qrencode" ] || error "\n qrencode download failed / qrencode 下载失败，请检查 GitHub 网络连通性。\n"
+
+  if [ "$IS_ARGO" = 'is_argo' ] && [ ! -x "$TEMP_DIR/cloudflared" ]; then
+    wget --no-check-certificate -qO $TEMP_DIR/cloudflared \
+      ${GH_PROXY}https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-$ARGO_ARCH >/dev/null 2>&1 \
+      && chmod +x $TEMP_DIR/cloudflared >/dev/null 2>&1
+  fi
+  [ "$IS_ARGO" != 'is_argo' ] || [ -x "$TEMP_DIR/cloudflared" ] || error "\n cloudflared download failed / cloudflared 下载失败，请检查 GitHub 网络连通性。\n"
+
   sing-box_json
   echo "${L^^}" > ${WORK_DIR}/language
   cp $TEMP_DIR/sing-box $TEMP_DIR/jq ${WORK_DIR}
@@ -3922,7 +3954,7 @@ install_sing-box() {
   sing-box_systemd
 
   # 生成 Argo systemd 配置文件，并复制 cloudflared 可执行二进制文件
-  cp $TEMP_DIR/cloudflared ${WORK_DIR}
+  [ -x $TEMP_DIR/cloudflared ] && cp $TEMP_DIR/cloudflared ${WORK_DIR}
   [ -n "$ARGO_RUNS" ] && argo_systemd
 
   # 如果是 Json Argo，把配置文件复制到工作目录
