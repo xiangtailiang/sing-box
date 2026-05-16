@@ -2739,6 +2739,21 @@ EOF
   rm -f ${WORK_DIR}/cert/cert.conf
 }
 
+normalize_subscribe_domain() {
+  [ -z "$SUBSCRIBE_DOMAIN" ] && return
+  SUBSCRIBE_DOMAIN=${SUBSCRIBE_DOMAIN#http://}
+  SUBSCRIBE_DOMAIN=${SUBSCRIBE_DOMAIN#https://}
+  SUBSCRIBE_DOMAIN=${SUBSCRIBE_DOMAIN%%/*}
+  SUBSCRIBE_DOMAIN=${SUBSCRIBE_DOMAIN%/}
+}
+
+fetch_subscribe_domain() {
+  [ -n "$SUBSCRIBE_DOMAIN" ] && normalize_subscribe_domain && return
+  [ -s ${WORK_DIR}/nginx.conf ] || return
+  SUBSCRIBE_DOMAIN=$(sed -n 's/^# SUBSCRIBE_DOMAIN=//p' ${WORK_DIR}/nginx.conf | sed -n '1p')
+  normalize_subscribe_domain
+}
+
 # Nginx 配置文件
 export_nginx_conf_file() {
   # 在添加协议，需要用到 nginx 的时候，先检测是否已经安装
@@ -2746,6 +2761,8 @@ export_nginx_conf_file() {
     info "\n $(text 7) nginx"
     ${PACKAGE_INSTALL[int]} nginx >/dev/null 2>&1
   fi
+
+  fetch_subscribe_domain
 
   NGINX_CONF="user  root;
 worker_processes  auto;
@@ -2786,6 +2803,10 @@ http {
     log_format  main  '\$remote_addr - \$remote_user [\$time_local] "\$request" '
                       '\$status \$body_bytes_sent "\$http_referer" '
                       '"\$http_user_agent" "\$http_x_forwarded_for"';
+"
+
+  [ "$IS_SUB" = 'is_sub' ] && [ -n "$SUBSCRIBE_DOMAIN" ] && NGINX_CONF+="
+# SUBSCRIBE_DOMAIN=${SUBSCRIBE_DOMAIN}
 "
 
   NGINX_CONF+="
@@ -3968,8 +3989,15 @@ export_list() {
   # 使用 Argo 时，获取临时隧道域名
   ls ${WORK_DIR}/conf/*-ws*inbounds.json >/dev/null 2>&1 && [ "$IS_ARGO" = 'is_argo' ] && [ -z "$ARGO_DOMAIN" ] && [[ "${STATUS[1]}" = "$(text 28)" || "$NONINTERACTIVE_INSTALL" = 'noninteractive_install' ]] && fetch_quicktunnel_domain
 
-  # 只要存在可用的 Argo 域名（包括临时隧道），订阅就走该 HTTPS 域名；否则回退到 IP:PORT 的 http 服务
-  [[ -n "$ARGO_DOMAIN" ]] && SUBSCRIBE_ADDRESS="https://$ARGO_DOMAIN" || SUBSCRIBE_ADDRESS="http://${SERVER_IP_1}:${PORT_NGINX}"
+  # 如设置了自定义订阅域名，则优先使用；否则有 Argo 域名走 HTTPS；最后回退到 IP:PORT 的 http 服务
+  [ "$IS_SUB" = 'is_sub' ] && fetch_subscribe_domain
+  if [ -n "$SUBSCRIBE_DOMAIN" ]; then
+    SUBSCRIBE_ADDRESS="https://$SUBSCRIBE_DOMAIN"
+  elif [ -n "$ARGO_DOMAIN" ]; then
+    SUBSCRIBE_ADDRESS="https://$ARGO_DOMAIN"
+  else
+    SUBSCRIBE_ADDRESS="http://${SERVER_IP_1}:${PORT_NGINX}"
+  fi
 
   # v1.3.0 (2025.11.10)及之后 reality 使用 xtls-rprx-vision 流控替代多路复用 multiplex，但为了兼容旧版本已安装的客户端 URI，在这里作判断
   if [ -n "$PORT_XTLS_REALITY" ]; then
@@ -5392,6 +5420,9 @@ for z in ${!ALL_PARAMETER[@]}; do
       ;;
     --SUBSCRIBE )
       ((z++)); [ "${ALL_PARAMETER[z]}" = 'true' ] && IS_SUB=is_sub
+      ;;
+    --SUBSCRIBE_DOMAIN )
+      ((z++)); SUBSCRIBE_DOMAIN=${ALL_PARAMETER[z]}
       ;;
     --ARGO )
       ((z++)); [ "${ALL_PARAMETER[z]}" = 'true' ] && IS_ARGO=is_argo

@@ -404,6 +404,7 @@ bash <(wget -qO- https://raw.githubusercontent.com/fscarmen/sing-box/main/sing-b
 | --VMESS_HOST_DOMAIN | vmess sni 域名，如 --CHOOSE_PROTOCOLS 是 [a,h] 时需要 |
 | --VLESS_HOST_DOMAIN | vless sni 域名，如 --CHOOSE_PROTOCOLS 是 [a,i] 时需要 |
 | --UUID_CONFIRM | 协议的 uuid 或者 password |
+| --SUBSCRIBE_DOMAIN | 自定义订阅域名，脚本会生成 https://域名/订阅路径，优先级高于 Argo 域名，可带端口 |
 | --ARGO | 是否使用 Argo Tunnel，如果是填 true，如果使用 Origin rules，则可以忽略本 Key |
 | --ARGO_DOMAIN | 固定 Argo 域名，即是 Json 或者 Token 隧道的域名 |
 | --ARGO_AUTH | Json, Token 隧道的内容，或者是 Cloudflare API 密钥 |
