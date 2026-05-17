@@ -1698,6 +1698,10 @@ add_port_hopping_nat() {
     add_port_hopping_ufw_rules "$PORT_HOPPING_START" "$PORT_HOPPING_END" "$PORT_HOPPING_TARGET" || warning "\n $(text 146) \n"
 
   elif [ "$SYSTEM" = 'Alpine' ]; then
+    # 先清理任何残留的 sing-box 跳跃 NAT 规则,保证 add 幂等
+    del_port_hopping_nat
+    PORT_HOPPING_START=$1; PORT_HOPPING_END=$2; PORT_HOPPING_TARGET=$3
+
     # 添加防火墙规则
     iptables  --table nat -A PREROUTING -p udp --dport ${PORT_HOPPING_START}:${PORT_HOPPING_END} -m comment --comment "$COMMENT" -j DNAT --to-destination :${PORT_HOPPING_TARGET} 2>/dev/null
     ip6tables --table nat -A PREROUTING -p udp --dport ${PORT_HOPPING_START}:${PORT_HOPPING_END} -m comment --comment "$COMMENT" -j DNAT --to-destination :${PORT_HOPPING_TARGET} 2>/dev/null
@@ -1718,11 +1722,19 @@ add_port_hopping_nat() {
       [ "$(firewall-cmd --zone=public --query-masquerade --permanent 2>/dev/null)" = 'yes' ] && info "\n firewalld masquerade $(text 28) $(text 37) \n" || warning "\n firewalld masquerade $(text 28) $(text 38) \n"
     fi
 
+    # 先清理残留再添加
+    del_port_hopping_nat
+    PORT_HOPPING_START=$1; PORT_HOPPING_END=$2; PORT_HOPPING_TARGET=$3
+
     # 添加防火墙规则
     firewall-cmd --zone=public --add-forward-port=port=${PORT_HOPPING_START}-${PORT_HOPPING_END}:proto=udp:toport=${PORT_HOPPING_TARGET} --permanent >/dev/null 2>&1
     firewall-cmd --reload >/dev/null 2>&1
 
   else
+    # 先清理残留再添加
+    del_port_hopping_nat
+    PORT_HOPPING_START=$1; PORT_HOPPING_END=$2; PORT_HOPPING_TARGET=$3
+
     # 添加防火墙规则
     iptables  --table nat -A PREROUTING -p udp --dport ${PORT_HOPPING_START}:${PORT_HOPPING_END} -m comment --comment "$COMMENT" -j DNAT --to-destination :${PORT_HOPPING_TARGET} 2>/dev/null
     ip6tables --table nat -A PREROUTING -p udp --dport ${PORT_HOPPING_START}:${PORT_HOPPING_END} -m comment --comment "$COMMENT" -j DNAT --to-destination :${PORT_HOPPING_TARGET} 2>/dev/null
@@ -1732,30 +1744,55 @@ add_port_hopping_nat() {
   fi
 }
 
-# 删除端口跳跃
+# 删除端口跳跃 — 循环清理所有带 "Sing-box Family Bucket" comment 的规则,
+# 修复历次安装/卸载因 -A 累积 + 单次 -D 导致的残留 (常见症状:首条 stale rule 把
+# 跳段口 DNAT 到早已退出的目标端口,新装的正确规则被截胡)。
 del_port_hopping_nat() {
   local FW_BACKEND
   FW_BACKEND=$(check_port_hopping_firewall)
 
-  check_port_hopping_nat
-  [ -z "$PORT_HOPPING_START" ] && return
-
   if [ "$FW_BACKEND" = 'ufw' ]; then
     del_port_hopping_ufw_rules || warning "\n $(text 146) \n"
+    return
+  fi
 
-  elif [ "$SYSTEM" = 'Alpine' ]; then
-    local COMMENT="NAT ${PORT_HOPPING_START}:${PORT_HOPPING_END} to ${PORT_HOPPING_TARGET} (Sing-box Family Bucket)"
-    iptables  --table nat -D PREROUTING -p udp --dport ${PORT_HOPPING_START}:${PORT_HOPPING_END} -m comment --comment "$COMMENT" -j DNAT --to-destination :${PORT_HOPPING_TARGET} 2>/dev/null
-    ip6tables --table nat -D PREROUTING -p udp --dport ${PORT_HOPPING_START}:${PORT_HOPPING_END} -m comment --comment "$COMMENT" -j DNAT --to-destination :${PORT_HOPPING_TARGET} 2>/dev/null
-
-  elif command -v firewall-cmd >/dev/null 2>&1 || [ "$SYSTEM" = 'CentOS' ]; then
-    firewall-cmd --zone=public --permanent --remove-forward-port=port=${PORT_HOPPING_START}-${PORT_HOPPING_END}:proto=udp:toport=${PORT_HOPPING_TARGET} >/dev/null 2>&1
+  if [ "$FW_BACKEND" = 'firewalld' ]; then
+    local _GUARD=0
+    while [ $_GUARD -lt 50 ]; do
+      check_port_hopping_nat
+      [ -z "$PORT_HOPPING_START" ] && break
+      firewall-cmd --zone=public --permanent --remove-forward-port=port=${PORT_HOPPING_START}-${PORT_HOPPING_END}:proto=udp:toport=${PORT_HOPPING_TARGET} >/dev/null 2>&1 || break
+      _GUARD=$((_GUARD+1))
+    done
     firewall-cmd --reload >/dev/null 2>&1
+    return
+  fi
 
+  # iptables / Alpine / iptables-nft: 逐条删除所有 sing-box 跳跃 NAT 规则
+  local LINE _GUARD
+  _GUARD=0
+  if command -v iptables >/dev/null 2>&1; then
+    while [ $_GUARD -lt 200 ]; do
+      LINE=$(iptables --table nat -S PREROUTING 2>/dev/null | grep -m1 'Sing-box Family Bucket')
+      [ -z "$LINE" ] && break
+      iptables --table nat $(sed 's/^-A /-D /' <<< "$LINE") 2>/dev/null || break
+      _GUARD=$((_GUARD+1))
+    done
+  fi
+  _GUARD=0
+  if command -v ip6tables >/dev/null 2>&1; then
+    while [ $_GUARD -lt 200 ]; do
+      LINE=$(ip6tables --table nat -S PREROUTING 2>/dev/null | grep -m1 'Sing-box Family Bucket')
+      [ -z "$LINE" ] && break
+      ip6tables --table nat $(sed 's/^-A /-D /' <<< "$LINE") 2>/dev/null || break
+      _GUARD=$((_GUARD+1))
+    done
+  fi
+
+  if [ "$SYSTEM" = 'Alpine' ]; then
+    rc-service iptables  save >/dev/null 2>&1
+    rc-service ip6tables save >/dev/null 2>&1
   else
-    local COMMENT="NAT ${PORT_HOPPING_START}:${PORT_HOPPING_END} to ${PORT_HOPPING_TARGET} (Sing-box Family Bucket)"
-    iptables  --table nat -D PREROUTING -p udp --dport ${PORT_HOPPING_START}:${PORT_HOPPING_END} -m comment --comment "$COMMENT" -j DNAT --to-destination :${PORT_HOPPING_TARGET} 2>/dev/null
-    ip6tables --table nat -D PREROUTING -p udp --dport ${PORT_HOPPING_START}:${PORT_HOPPING_END} -m comment --comment "$COMMENT" -j DNAT --to-destination :${PORT_HOPPING_TARGET} 2>/dev/null
     [ "$(systemctl is-active netfilter-persistent)" = 'active' ] && netfilter-persistent save 2>/dev/null
   fi
 }
