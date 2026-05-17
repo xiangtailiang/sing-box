@@ -2910,8 +2910,10 @@ server {
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto \$scheme;
-        proxy_set_header Upgrade \$http_upgrade;
-        proxy_set_header Connection "upgrade";
+        # 关掉 proxy buffering:订阅都是静态文件,没必要 buffer 到 disk;
+        # 加上很多发行版的 /var/lib/nginx/proxy/ 对 www-data 不可写,大文件 (clash2 等)
+        # 会因为 "Permission denied while reading upstream" 在写 temp file 时被截断
+        proxy_buffering off;
     }
 }
 
@@ -2930,8 +2932,10 @@ server {
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto \$scheme;
-        proxy_set_header Upgrade \$http_upgrade;
-        proxy_set_header Connection "upgrade";
+        # 关掉 proxy buffering:订阅都是静态文件,没必要 buffer 到 disk;
+        # 加上很多发行版的 /var/lib/nginx/proxy/ 对 www-data 不可写,大文件 (clash2 等)
+        # 会因为 "Permission denied while reading upstream" 在写 temp file 时被截断
+        proxy_buffering off;
     }
 }
 EOF
