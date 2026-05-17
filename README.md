@@ -24,6 +24,8 @@
 
 * * *
 ## 1.更新信息
+2026.05.17 v1.3.13 1. Automatically generate host Nginx 80/443 reverse proxy configuration for `--SUBSCRIBE_DOMAIN` and proxy it to `--PORT_NGINX`; 2. Reuse existing Let's Encrypt certificates when available, otherwise create a local self-signed origin certificate; 3. Use an independent pid file for the built-in subscription Nginx so it can coexist with the host Nginx; 1. `--SUBSCRIBE_DOMAIN` 自动生成宿主机 Nginx 80/443 反代配置并回源到 `--PORT_NGINX`; 2. 优先复用已有 Let's Encrypt 证书，没有则生成本地自签回源证书; 3. 内置订阅 Nginx 使用独立 pid，避免和宿主机 Nginx 冲突
+
 2026.05.14 v1.3.12 1. Add Hysteria2 Realm support for machines without public inbound access, with optional WARP-assisted hole punching for strict NAT environments; 2. Realm configuration export is supported for Clash/Mihomo and sing-box clients; 3. Hysteria2 Realm can be enabled or disabled directly via sb -d; 4. Non-interactive installs support --HY2_REALM and --HY2_WARP parameters; 1. 增加 Hysteria2 Realm 支持，适用于没有公网入口的机器，并可选 WARP 辅助打洞; 2. Realm 已支持导出 Clash/Mihomo 和 sing-box 客户端配置; 3. 修改节点配置时可直接开启或关闭 Hysteria2 Realm; 4. 无交互安装支持 --HY2_REALM 与 --HY2_WARP 参数
 
 2026.05.06 v1.3.11 1. Generate v2rayn:// dedicated links for Tuic subscriptions; 2. Generate v2rayn:// dedicated links for AnyTLS subscriptions; 3. Generate v2rayn:// dedicated links for naive http2 and quic modes. Thanks to @DHR60; 1. 为 Tuic 订阅生成 v2rayn:// 专属链接; 2. 为 AnyTLS 订阅生成 v2rayn:// 专属链接; 3. 为 naive http2 和 quic 模式生成 v2rayn:// 专属链接，感谢 @DHR60
@@ -224,7 +226,7 @@ bash <(wget -qO- https://raw.githubusercontent.com/fscarmen/sing-box/main/sing-b
   --NODE_NAME_CONFIRM bucket
 ```
 
-宿主机已有 Nginx / Caddy / 1Panel 之类的 443 入口时，推荐把 `sub.test.com` 反代到本脚本内置订阅端口 `26000`。这样 Cloudflare 侧通常只需要添加 DNS 记录，不需要额外配置 Origin Rule 或 Flexible。
+脚本会自动为 `sub.test.com` 生成宿主机 Nginx 80/443 反代配置，并回源到本脚本内置订阅端口 `26000`。如果已经存在 `/etc/letsencrypt/live/sub.test.com/` 证书会优先复用，否则会生成本地自签回源证书。Cloudflare 侧通常只需要添加 DNS 记录，不需要额外配置 Origin Rule 或 Flexible。
 
 Nginx 示例：
 
@@ -254,7 +256,7 @@ server {
 }
 ```
 
-如果你已经有现成的 443 反代入口，这个方案在 Cloudflare 侧一般只要把 `sub.test.com` 指向服务器即可。
+如果你已经有现成的 443 反代入口，可以继续按自己的面板或 Nginx 配置管理；脚本生成的配置文件位于系统 Nginx include 目录下，文件名以 `sing-box-subscribe-` 开头。
 
 </details>
 
@@ -474,9 +476,7 @@ bash <(wget -qO- https://raw.githubusercontent.com/fscarmen/sing-box/main/sing-b
 | --REALITY_PRIVATE | reality 密钥 |
 | --NODE_NAME_CONFIRM | 节点名 |
 
-推荐：如果你已经有宿主机 443 的 Nginx / Caddy / 面板反代入口，订阅 HTTPS 优先用 `--SUBSCRIBE_DOMAIN` + 443 反代到 `PORT_NGINX`，Cloudflare 侧通常只需要配 DNS。
-
-注意：`--SUBSCRIBE_DOMAIN` 只负责导出订阅链接，不会自动帮你把内置订阅服务升级成 443/TLS。
+推荐：订阅 HTTPS 优先用 `--SUBSCRIBE_DOMAIN` + 443 反代到 `PORT_NGINX`，脚本会自动生成宿主机 Nginx 80/443 反代配置，Cloudflare 侧通常只需要配 DNS。
 
 ## 5.Json Argo Tunnel 获取 (推荐)
 

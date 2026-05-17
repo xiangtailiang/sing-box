@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 # 当前脚本版本号
-VERSION='v1.3.12 (2026.05.14)'
+VERSION='v1.3.13 (2026.05.17)'
 
 # Github 反代加速代理
 GITHUB_PROXY=('https://hub.glowp.xyz/' 'https://proxy.vvvv.ee/')
@@ -2335,6 +2335,12 @@ collect_exposed_ports() {
     append_unique_port EXPOSED_TCP_PORTS "$NGINX_PORT"
   fi
 
+  fetch_subscribe_domain
+  if [ -n "$SUBSCRIBE_DOMAIN" ] && parse_subscribe_endpoint && [ "$SUBSCRIBE_HTTPS_PORT" = '443' ]; then
+    append_unique_port EXPOSED_TCP_PORTS 80
+    append_unique_port EXPOSED_TCP_PORTS 443
+  fi
+
   for FILE in ${WORK_DIR}/conf/*_inbounds.json; do
     [ ! -s "$FILE" ] && continue
     BASENAME=$(basename "$FILE")
@@ -2530,45 +2536,8 @@ sync_firewall_rules() {
   local HY2_FILE="${WORK_DIR}/conf/*${NODE_TAG[1]}_inbounds.json"
   local HY2_TARGET DESIRED_START DESIRED_END
   local EXISTING_START EXISTING_END EXISTING_TARGET
-  local FILE BASENAME NGINX_PORT HAS_NGINX=false
 
-  EXPOSED_TCP_PORTS=()
-  EXPOSED_UDP_PORTS=()
-
-  if [ -s "${WORK_DIR}/nginx.conf" ]; then
-    HAS_NGINX=true
-    NGINX_PORT=$(awk '
-      /listen[[:space:]]+[0-9]+[[:space:]]*;/ && $2 !~ /^\[/ {
-        gsub(/;/, "", $2)
-        print $2
-        exit
-      }
-    ' "${WORK_DIR}/nginx.conf")
-    append_unique_port EXPOSED_TCP_PORTS "$NGINX_PORT"
-  fi
-
-  for FILE in ${WORK_DIR}/conf/*_inbounds.json; do
-    [ ! -s "$FILE" ] && continue
-    BASENAME=$(basename "$FILE")
-    PORT=$(awk -F '[:,]' '/"listen_port"/{gsub(/[[:space:]]/, "", $2); print $2; exit}' "$FILE")
-    [ -z "$PORT" ] && continue
-
-    case "$BASENAME" in
-      *hysteria2_inbounds.json|*tuic_inbounds.json )
-        append_unique_port EXPOSED_UDP_PORTS "$PORT"
-        ;;
-      *naive_inbounds.json )
-        append_unique_port EXPOSED_TCP_PORTS "$PORT"
-        append_unique_port EXPOSED_UDP_PORTS "$PORT"
-        ;;
-      *vmess-ws_inbounds.json|*vless-ws-tls_inbounds.json )
-        [ "$HAS_NGINX" = false ] && append_unique_port EXPOSED_TCP_PORTS "$PORT"
-        ;;
-      * )
-        append_unique_port EXPOSED_TCP_PORTS "$PORT"
-        ;;
-    esac
-  done
+  collect_exposed_ports
 
   FW_BACKEND=$(check_firewall_backend)
 
@@ -2754,6 +2723,153 @@ fetch_subscribe_domain() {
   normalize_subscribe_domain
 }
 
+parse_subscribe_endpoint() {
+  SUBSCRIBE_HOST=''
+  SUBSCRIBE_HTTPS_PORT='443'
+  fetch_subscribe_domain
+  [ -z "$SUBSCRIBE_DOMAIN" ] && return 1
+
+  if [[ "$SUBSCRIBE_DOMAIN" =~ ^\[([^][]+)\]:([0-9]{1,5})$ ]]; then
+    SUBSCRIBE_HOST="${BASH_REMATCH[1]}"
+    SUBSCRIBE_HTTPS_PORT="${BASH_REMATCH[2]}"
+  elif [[ "$SUBSCRIBE_DOMAIN" =~ ^([^:]+):([0-9]{1,5})$ ]] && [[ "${BASH_REMATCH[1]}" != *:* ]]; then
+    SUBSCRIBE_HOST="${BASH_REMATCH[1]}"
+    SUBSCRIBE_HTTPS_PORT="${BASH_REMATCH[2]}"
+  else
+    SUBSCRIBE_HOST="$SUBSCRIBE_DOMAIN"
+  fi
+
+  [ -n "$SUBSCRIBE_HOST" ]
+}
+
+host_nginx_include_target() {
+  HOST_NGINX_CONF_PATH=''
+  HOST_NGINX_LINK_PATH=''
+
+  if [ -s /etc/nginx/nginx.conf ] && grep -Eq 'include[[:space:]]+/etc/nginx/conf\.d/\*\.conf;' /etc/nginx/nginx.conf; then
+    mkdir -p /etc/nginx/conf.d
+    HOST_NGINX_CONF_PATH="/etc/nginx/conf.d/sing-box-subscribe-${SUBSCRIBE_SAFE_HOST}.conf"
+  elif [ -s /etc/nginx/nginx.conf ] && grep -Eq 'include[[:space:]]+/etc/nginx/sites-enabled/\*;' /etc/nginx/nginx.conf; then
+    mkdir -p /etc/nginx/sites-available /etc/nginx/sites-enabled
+    HOST_NGINX_CONF_PATH="/etc/nginx/sites-available/sing-box-subscribe-${SUBSCRIBE_SAFE_HOST}.conf"
+    HOST_NGINX_LINK_PATH="/etc/nginx/sites-enabled/sing-box-subscribe-${SUBSCRIBE_SAFE_HOST}.conf"
+  else
+    mkdir -p /etc/nginx/conf.d
+    HOST_NGINX_CONF_PATH="/etc/nginx/conf.d/sing-box-subscribe-${SUBSCRIBE_SAFE_HOST}.conf"
+  fi
+}
+
+ensure_subscribe_tls_cert() {
+  local CERT_CONF="${TEMP_DIR}/subscribe-tls.conf"
+  SUBSCRIBE_CERT_FILE="/etc/letsencrypt/live/${SUBSCRIBE_HOST}/fullchain.pem"
+  SUBSCRIBE_KEY_FILE="/etc/letsencrypt/live/${SUBSCRIBE_HOST}/privkey.pem"
+
+  if [ -s "$SUBSCRIBE_CERT_FILE" ] && [ -s "$SUBSCRIBE_KEY_FILE" ]; then
+    return 0
+  fi
+
+  mkdir -p "${WORK_DIR}/cert"
+  SUBSCRIBE_CERT_FILE="${WORK_DIR}/cert/subscribe-${SUBSCRIBE_SAFE_HOST}.crt"
+  SUBSCRIBE_KEY_FILE="${WORK_DIR}/cert/subscribe-${SUBSCRIBE_SAFE_HOST}.key"
+
+  if [ -s "$SUBSCRIBE_CERT_FILE" ] && [ -s "$SUBSCRIBE_KEY_FILE" ]; then
+    return 0
+  fi
+
+  cat > "$CERT_CONF" << EOF
+[req]
+distinguished_name = req_distinguished_name
+prompt = no
+x509_extensions = v3_req
+
+[req_distinguished_name]
+CN = ${SUBSCRIBE_HOST}
+
+[v3_req]
+subjectAltName = @alt_names
+
+[alt_names]
+DNS.1 = ${SUBSCRIBE_HOST}
+EOF
+
+  openssl req -new -x509 -nodes -days 36500 -newkey rsa:2048 \
+    -keyout "$SUBSCRIBE_KEY_FILE" \
+    -out "$SUBSCRIBE_CERT_FILE" \
+    -config "$CERT_CONF" \
+    -extensions v3_req >/dev/null 2>&1
+  chmod 600 "$SUBSCRIBE_KEY_FILE" >/dev/null 2>&1 || true
+}
+
+reload_host_nginx() {
+  nginx -t >/dev/null 2>&1 || return 1
+
+  if command -v systemctl >/dev/null 2>&1; then
+    systemctl enable nginx >/dev/null 2>&1 || true
+    systemctl restart nginx >/dev/null 2>&1 || systemctl reload nginx >/dev/null 2>&1 || return 1
+  elif command -v rc-service >/dev/null 2>&1; then
+    rc-update add nginx default >/dev/null 2>&1 || true
+    rc-service nginx restart >/dev/null 2>&1 || rc-service nginx reload >/dev/null 2>&1 || return 1
+  else
+    nginx -s reload >/dev/null 2>&1 || nginx >/dev/null 2>&1 || return 1
+  fi
+}
+
+export_host_nginx_proxy_conf_file() {
+  [ "$IS_SUB" = 'is_sub' ] || return 0
+  parse_subscribe_endpoint || return 0
+  [ "$SUBSCRIBE_HTTPS_PORT" = '443' ] || return 0
+  [ -n "$PORT_NGINX" ] || return 0
+
+  if ! command -v nginx >/dev/null 2>&1; then
+    info "\n $(text 7) nginx"
+    ${PACKAGE_INSTALL[int]} nginx >/dev/null 2>&1
+  fi
+
+  SUBSCRIBE_SAFE_HOST=$(sed 's/[^A-Za-z0-9_.-]/_/g' <<< "$SUBSCRIBE_HOST")
+  host_nginx_include_target
+  ensure_subscribe_tls_cert || return 1
+
+  cat > "$HOST_NGINX_CONF_PATH" << EOF
+# Managed by sing-box.sh. Reverse proxy ${SUBSCRIBE_HOST}:443 to the built-in subscription service.
+server {
+    listen 80;
+    listen [::]:80;
+    server_name ${SUBSCRIBE_HOST};
+    return 301 https://\$host\$request_uri;
+}
+
+server {
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
+    server_name ${SUBSCRIBE_HOST};
+
+    ssl_certificate     ${SUBSCRIBE_CERT_FILE};
+    ssl_certificate_key ${SUBSCRIBE_KEY_FILE};
+
+    location / {
+        proxy_pass http://127.0.0.1:${PORT_NGINX};
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "upgrade";
+    }
+}
+EOF
+
+  [ -n "$HOST_NGINX_LINK_PATH" ] && ln -sf "$HOST_NGINX_CONF_PATH" "$HOST_NGINX_LINK_PATH"
+
+  if reload_host_nginx; then
+    HOST_NGINX_PROXY_READY=true
+  else
+    warning "\n Host Nginx 443 reverse proxy config test/reload failed. Please check ${HOST_NGINX_CONF_PATH} \n"
+    HOST_NGINX_PROXY_READY=false
+    return 1
+  fi
+}
+
 # Nginx 配置文件
 export_nginx_conf_file() {
   # 在添加协议，需要用到 nginx 的时候，先检测是否已经安装
@@ -2768,7 +2884,7 @@ export_nginx_conf_file() {
 worker_processes  auto;
 
 error_log  /dev/null;
-pid        /var/run/nginx.pid;
+pid        /var/run/sing-box-nginx.pid;
 
 events {
     worker_connections  1024;
@@ -2887,6 +3003,7 @@ http {
 }"
 
   echo "$NGINX_CONF" > ${WORK_DIR}/nginx.conf
+  export_host_nginx_proxy_conf_file || true
 }
 
 # 生成 sing-box 配置文件
@@ -3735,10 +3852,15 @@ NoNewPrivileges=yes
 TimeoutStartSec=0
 WorkingDirectory=${WORK_DIR}
 "
-    [[ -n "$PORT_NGINX" && "$IS_CENTOS" != 'CentOS7' ]] && SING_BOX_SERVICE+="ExecStartPre=$(command -v nginx) -c ${WORK_DIR}/nginx.conf
+    [[ -n "$PORT_NGINX" && "$IS_CENTOS" != 'CentOS7' ]] && SING_BOX_SERVICE+="ExecStartPre=-$(command -v nginx) -s quit -c ${WORK_DIR}/nginx.conf
+ExecStartPre=$(command -v nginx) -c ${WORK_DIR}/nginx.conf
 "
     SING_BOX_SERVICE+="ExecStart=${WORK_DIR}/sing-box run -C ${WORK_DIR}/conf
 ExecReload=/bin/kill -HUP \$MAINPID
+"
+    [[ -n "$PORT_NGINX" && "$IS_CENTOS" != 'CentOS7' ]] && SING_BOX_SERVICE+="ExecStopPost=-$(command -v nginx) -s quit -c ${WORK_DIR}/nginx.conf
+"
+    SING_BOX_SERVICE+="
 Restart=on-failure
 RestartSec=10
 LimitNOFILE=infinity
