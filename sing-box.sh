@@ -4377,7 +4377,8 @@ export_list() {
   {
     # 模板1: 自定义模板 — 内联本机自动生成的节点 + curated rule-providers
     # 从 CLASH_SUBSCRIBE (proxies 块) 里抽出节点名,用于 proxy-group 引用
-    local CLASH_NODE_NAMES=$(grep -oE 'name: "[^"]+"' <<< "$CLASH_SUBSCRIBE" | sed 's/^name: "/      - "/; s/$/"/')
+    # grep 抓出的 `name: "X"` 已经带闭合引号,只把前缀替换即可,不要再补 "
+    local CLASH_NODE_NAMES=$(grep -oE 'name: "[^"]+"' <<< "$CLASH_SUBSCRIBE" | sed 's/^name: "/      - "/')
 
     cat > ${WORK_DIR}/subscribe/clash <<CLASH_EOF
 # Mihomo/Clash 配置
