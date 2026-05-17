@@ -3945,6 +3945,10 @@ install_sing-box() {
   fi
   [ "$IS_ARGO" != 'is_argo' ] || [ -x "$TEMP_DIR/cloudflared" ] || error "\n cloudflared download failed / cloudflared 下载失败，请检查 GitHub 网络连通性。\n"
 
+  # 覆盖可执行文件前先停掉旧服务，避免重装/重复执行时报 Text file busy
+  [ -s ${SINGBOX_DAEMON_FILE} ] && cmd_systemctl disable sing-box || true
+  [ -s ${ARGO_DAEMON_FILE} ] && cmd_systemctl disable argo || true
+
   sing-box_json
   echo "${L^^}" > ${WORK_DIR}/language
   cp $TEMP_DIR/sing-box $TEMP_DIR/jq ${WORK_DIR}
