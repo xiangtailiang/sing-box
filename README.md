@@ -24,7 +24,7 @@
 
 * * *
 ## 1.更新信息
-2026.05.17 v1.3.13 1. Automatically generate host Nginx 80/443 reverse proxy configuration for `--SUBSCRIBE_DOMAIN` and proxy it to `--PORT_NGINX`; 2. Reuse existing Let's Encrypt certificates when available, otherwise create a local self-signed origin certificate; 3. Use an independent pid file for the built-in subscription Nginx so it can coexist with the host Nginx; 1. `--SUBSCRIBE_DOMAIN` 自动生成宿主机 Nginx 80/443 反代配置并回源到 `--PORT_NGINX`; 2. 优先复用已有 Let's Encrypt 证书，没有则生成本地自签回源证书; 3. 内置订阅 Nginx 使用独立 pid，避免和宿主机 Nginx 冲突
+2026.05.17 v1.3.13 1. Automatically generate host Nginx 80/443 reverse proxy configuration for `--SUBSCRIBE_DOMAIN` and proxy it to `--PORT_NGINX`; 2. Reuse existing Let's Encrypt certificates when available, otherwise create a local self-signed origin certificate; 3. Use an independent pid file for the built-in subscription Nginx so it can coexist with the host Nginx; 4. Port 80 also proxies to the subscription service for Cloudflare Flexible compatibility; 1. `--SUBSCRIBE_DOMAIN` 自动生成宿主机 Nginx 80/443 反代配置并回源到 `--PORT_NGINX`; 2. 优先复用已有 Let's Encrypt 证书，没有则生成本地自签回源证书; 3. 内置订阅 Nginx 使用独立 pid，避免和宿主机 Nginx 冲突; 4. 80 端口也直接反代订阅服务，兼容 Cloudflare Flexible
 
 2026.05.14 v1.3.12 1. Add Hysteria2 Realm support for machines without public inbound access, with optional WARP-assisted hole punching for strict NAT environments; 2. Realm configuration export is supported for Clash/Mihomo and sing-box clients; 3. Hysteria2 Realm can be enabled or disabled directly via sb -d; 4. Non-interactive installs support --HY2_REALM and --HY2_WARP parameters; 1. 增加 Hysteria2 Realm 支持，适用于没有公网入口的机器，并可选 WARP 辅助打洞; 2. Realm 已支持导出 Clash/Mihomo 和 sing-box 客户端配置; 3. 修改节点配置时可直接开启或关闭 Hysteria2 Realm; 4. 无交互安装支持 --HY2_REALM 与 --HY2_WARP 参数
 
@@ -235,7 +235,13 @@ server {
     listen 80;
     listen [::]:80;
     server_name sub.test.com;
-    return 301 https://$host$request_uri;
+    location / {
+        proxy_pass http://127.0.0.1:26000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
 }
 
 server {
@@ -251,7 +257,7 @@ server {
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Forwarded-Proto $scheme;
     }
 }
 ```
