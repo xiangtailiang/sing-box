@@ -1768,23 +1768,25 @@ del_port_hopping_nat() {
     return
   fi
 
-  # iptables / Alpine / iptables-nft: 逐条删除所有 sing-box 跳跃 NAT 规则
-  local LINE _GUARD
+  # iptables / Alpine / iptables-nft: 逐条删除所有 sing-box 跳跃 NAT 规则。
+  # 不用 -A→-D 文本转换是因为 comment 带空格会被 shell word-split 切碎,
+  # 改用 -L --line-numbers 按行号删,每删一条所有行号会左移,所以每次循环重新查。
+  local LN _GUARD
   _GUARD=0
   if command -v iptables >/dev/null 2>&1; then
     while [ $_GUARD -lt 200 ]; do
-      LINE=$(iptables --table nat -S PREROUTING 2>/dev/null | grep -m1 'Sing-box Family Bucket')
-      [ -z "$LINE" ] && break
-      iptables --table nat $(sed 's/^-A /-D /' <<< "$LINE") 2>/dev/null || break
+      LN=$(iptables --table nat -L PREROUTING --line-numbers -n 2>/dev/null | grep -m1 'Sing-box Family Bucket' | awk '{print $1}')
+      [ -z "$LN" ] && break
+      iptables --table nat -D PREROUTING "$LN" 2>/dev/null || break
       _GUARD=$((_GUARD+1))
     done
   fi
   _GUARD=0
   if command -v ip6tables >/dev/null 2>&1; then
     while [ $_GUARD -lt 200 ]; do
-      LINE=$(ip6tables --table nat -S PREROUTING 2>/dev/null | grep -m1 'Sing-box Family Bucket')
-      [ -z "$LINE" ] && break
-      ip6tables --table nat $(sed 's/^-A /-D /' <<< "$LINE") 2>/dev/null || break
+      LN=$(ip6tables --table nat -L PREROUTING --line-numbers -n 2>/dev/null | grep -m1 'Sing-box Family Bucket' | awk '{print $1}')
+      [ -z "$LN" ] && break
+      ip6tables --table nat -D PREROUTING "$LN" 2>/dev/null || break
       _GUARD=$((_GUARD+1))
     done
   fi
