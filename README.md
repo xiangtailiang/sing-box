@@ -201,7 +201,65 @@ bash <(wget -qO- https://raw.githubusercontent.com/fscarmen/sing-box/main/sing-b
 ### 方式3. KV 传参，举例
 
 <details>
-    <summary> 使用 Origin Rule + 订阅（点击即可展开或收起）</summary>
+    <summary> 使用 443 HTTPS 反向代理 + 订阅（推荐，点击即可展开或收起）</summary>
+<br>
+
+```
+bash <(wget -qO- https://raw.githubusercontent.com/fscarmen/sing-box/main/sing-box.sh) \
+  --LANGUAGE c \
+  --CHOOSE_PROTOCOLS a \
+  --START_PORT 8881 \
+  --PORT_NGINX 26000 \
+  --SERVER_IP 123.123.123.123 \
+  --CDN skk.moe \
+  --VMESS_HOST_DOMAIN vmess.test.com \
+  --VLESS_HOST_DOMAIN vless.test.com \
+  --UUID_CONFIRM 20f7fca4-86e5-4ddf-9eed-24142073d197 \
+  --SUBSCRIBE=true \
+  --SUBSCRIBE_DOMAIN=sub.test.com \
+  --HY2_PORT_HOPPING_RANGE 50000:51000 \
+  --HY2_REALM=true \
+  --HY2_WARP=true \
+  --REALITY_PRIVATE=UPO3FWlg6YDJbASYi7KIESibPec_K46edTvDPbqEYFk \
+  --NODE_NAME_CONFIRM bucket
+```
+
+宿主机已有 Nginx / Caddy / 1Panel 之类的 443 入口时，推荐把 `sub.test.com` 反代到本脚本内置订阅端口 `26000`。这样 Cloudflare 侧通常只需要添加 DNS 记录，不需要额外配置 Origin Rule 或 Flexible。
+
+Nginx 示例：
+
+```nginx
+server {
+    listen 80;
+    listen [::]:80;
+    server_name sub.test.com;
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
+    server_name sub.test.com;
+
+    ssl_certificate     /etc/letsencrypt/live/sub.test.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/sub.test.com/privkey.pem;
+
+    location / {
+        proxy_pass http://127.0.0.1:26000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+    }
+}
+```
+
+如果你已经有现成的 443 反代入口，这个方案在 Cloudflare 侧一般只要把 `sub.test.com` 指向服务器即可。
+
+</details>
+
+<details>
+    <summary> 使用 Cloudflare Origin Rule + 订阅（备用方案，点击即可展开或收起）</summary>
 <br>
 
 ```
@@ -223,10 +281,12 @@ bash <(wget -qO- https://raw.githubusercontent.com/fscarmen/sing-box/main/sing-b
   --NODE_NAME_CONFIRM bucket
 ```
 
+这个方案仍然可用，但 Cloudflare 侧通常还要额外配回源端口规则，复杂度高于前面的 443 反代方案。
+
 </details>
 
 <details>
-    <summary> 使用 Origin Rule ，不要订阅（点击即可展开或收起）</summary>
+    <summary> 使用 Cloudflare Origin Rule ，不要订阅（备用方案，点击即可展开或收起）</summary>
 <br>
 
 ```
@@ -414,6 +474,9 @@ bash <(wget -qO- https://raw.githubusercontent.com/fscarmen/sing-box/main/sing-b
 | --REALITY_PRIVATE | reality 密钥 |
 | --NODE_NAME_CONFIRM | 节点名 |
 
+推荐：如果你已经有宿主机 443 的 Nginx / Caddy / 面板反代入口，订阅 HTTPS 优先用 `--SUBSCRIBE_DOMAIN` + 443 反代到 `PORT_NGINX`，Cloudflare 侧通常只需要配 DNS。
+
+注意：`--SUBSCRIBE_DOMAIN` 只负责导出订阅链接，不会自动帮你把内置订阅服务升级成 443/TLS。
 
 ## 5.Json Argo Tunnel 获取 (推荐)
 
