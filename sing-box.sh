@@ -474,19 +474,25 @@ fetch_warp_credentials() {
   WARP_IPV6='2606:4700:110:8a36:df92:102a:9602:fa18'
   WARP_RESERVED='[78, 135, 76]'
 
-  local WARP_RESP
-  WARP_RESP=$( (command -v curl >/dev/null 2>&1 && curl -sm5 -k https://warp.xijp.eu.org 2>/dev/null) \
-            || (command -v wget >/dev/null 2>&1 && timeout 3 wget --tries=2 -qO- https://warp.xijp.eu.org 2>/dev/null) )
-  [ -n "$WARP_RESP" ] && WARP_RESP=$(tr -d '\r' <<< "$WARP_RESP")
-  if [ -n "$WARP_RESP" ] && ! grep -q '<html' <<< "$WARP_RESP"; then
-    local _pvk _wpv6 _res
-    _pvk=$(awk -F'：' '/Private_key/{print $2; exit}' <<< "$WARP_RESP" | xargs)
-    _wpv6=$(awk -F'：' '/IPV6/{print $2; exit}' <<< "$WARP_RESP" | xargs)
-    _res=$(awk -F'：' '/reserved/{print $2; exit}' <<< "$WARP_RESP" | xargs)
-    [ -n "$_pvk" ] && WARP_PRIVATE_KEY="$_pvk"
-    [ -n "$_wpv6" ] && WARP_IPV6="$_wpv6"
-    [[ "$_res" =~ ^\[[[:space:]]*[0-9]+[[:space:]]*,[[:space:]]*[0-9]+[[:space:]]*,[[:space:]]*[0-9]+[[:space:]]*\]$ ]] && WARP_RESERVED="$_res"
-  fi
+  local WARP_RESP _pvk _wpv6 _res
+  for _i in 1 2 3; do
+    WARP_RESP=$( (command -v curl >/dev/null 2>&1 && curl -sm5 -k https://warp.xijp.eu.org 2>/dev/null) \
+              || (command -v wget >/dev/null 2>&1 && timeout 5 wget --tries=2 -qO- https://warp.xijp.eu.org 2>/dev/null) )
+    [ -n "$WARP_RESP" ] && WARP_RESP=$(tr -d '\r' <<< "$WARP_RESP")
+    if [ -n "$WARP_RESP" ] && ! grep -q '<html' <<< "$WARP_RESP"; then
+      _pvk=$(awk -F'：' '/Private_key/{print $2; exit}' <<< "$WARP_RESP" | xargs)
+      _wpv6=$(awk -F'：' '/IPV6/{print $2; exit}' <<< "$WARP_RESP" | xargs)
+      _res=$(awk -F'：' '/reserved/{print $2; exit}' <<< "$WARP_RESP" | xargs)
+      if [ -n "$_pvk" ] && [ -n "$_wpv6" ] \
+         && [[ "$_res" =~ ^\[[[:space:]]*[0-9]+[[:space:]]*,[[:space:]]*[0-9]+[[:space:]]*,[[:space:]]*[0-9]+[[:space:]]*\]$ ]]; then
+        WARP_PRIVATE_KEY="$_pvk"
+        WARP_IPV6="$_wpv6"
+        WARP_RESERVED="$_res"
+        return 0
+      fi
+    fi
+    sleep 1
+  done
 }
 
 # 脚本当天及累计运行次数统计
